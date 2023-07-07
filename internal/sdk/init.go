@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/denisbrodbeck/machineid"
+	"github.com/getsentry/sentry-go"
 	"github.com/rs/zerolog/log"
 	uuid "github.com/satori/go.uuid"
 

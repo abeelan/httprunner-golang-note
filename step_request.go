@@ -1,3 +1,5 @@
+// 底层请求实现
+
 package hrp
 
 import (
@@ -65,10 +67,13 @@ func newRequestBuilder(parser *Parser, config *TConfig, stepRequest *Request) *r
 	request := &http.Request{
 		Header: make(http.Header),
 	}
+
 	if stepRequest.HTTP2 {
+		// "HTTP/2.0"
 		request.ProtoMajor = 2
 		request.ProtoMinor = 0
 	} else {
+		// "HTTP/1.1"
 		request.ProtoMajor = 1
 		request.ProtoMinor = 1
 	}
@@ -82,27 +87,31 @@ func newRequestBuilder(parser *Parser, config *TConfig, stepRequest *Request) *r
 	}
 }
 
+// 构建 HTTP 请求，并解析请求中包含的插件函数
 type requestBuilder struct {
-	stepRequest *Request
-	req         *http.Request
-	parser      *Parser
-	config      *TConfig
-	requestMap  map[string]interface{}
+	stepRequest *Request               // 当前步骤的请求信息，包括请求方法、URL、请求头、请求体等
+	req         *http.Request          // 是一个 http.Request 对象，用于发送实际的 HTTP 请求
+	parser      *Parser                // 解析插件
+	config      *TConfig               // 全局配置信息，包括运行时配置、环境变量等
+	requestMap  map[string]interface{} // 用于存储请求参数的字典，其中键为参数名，值为参数值
 }
 
+// prepareHeaders 初始化请求头
 func (r *requestBuilder) prepareHeaders(stepVariables map[string]interface{}) error {
 	// prepare request headers
 	stepHeaders := r.stepRequest.Headers
 	if r.config.Headers != nil {
-		// override headers
+		// override headers 合并请求头，如果出现重复，则用例中的请求头会覆盖全局配置中的
 		stepHeaders = mergeMap(stepHeaders, r.config.Headers)
 	}
 
 	if len(stepHeaders) > 0 {
+		// 解析字符串变量或函数
 		headers, err := r.parser.ParseHeaders(stepHeaders, stepVariables)
 		if err != nil {
 			return errors.Wrap(err, "parse headers failed")
 		}
+		// 将头添加到 req 结构体上
 		for key, value := range headers {
 			// omit pseudo header names for HTTP/1, e.g. :authority, :method, :path, :scheme
 			if strings.HasPrefix(key, ":") {
@@ -110,8 +119,11 @@ func (r *requestBuilder) prepareHeaders(stepVariables map[string]interface{}) er
 			}
 			r.req.Header.Add(key, value)
 
-			// prepare content length
+			// prepare content length 比较两个字符串 不区分大小写
+			// 该字段的值表示请求的实体主体的长度，用于服务器端正确处理请求。
+			// 通过解析并设置 ContentLength 字段，可以确保请求的内容长度正确传递给服务器。
 			if strings.EqualFold(key, "Content-Length") && value != "" {
+				// 将值解析为整数类型（int64）
 				if l, err := strconv.ParseInt(value, 10, 64); err == nil {
 					r.req.ContentLength = l
 				}
@@ -134,26 +146,28 @@ func (r *requestBuilder) prepareHeaders(stepVariables map[string]interface{}) er
 	// update header
 	headers := make(map[string]string)
 	for key, value := range r.req.Header {
-		headers[key] = value[0]
+		headers[key] = value[0] // value 是头信息的值切片，每个头信息只能有一个值，所以取第一个
 	}
 	r.requestMap["headers"] = headers
 	return nil
 }
 
+// prepareUrlParams 初始化请求地址及参数
 func (r *requestBuilder) prepareUrlParams(stepVariables map[string]interface{}) error {
-	// parse step request url
+	// parse step request url 解析 url
 	requestUrl, err := r.parser.ParseString(r.stepRequest.URL, stepVariables)
 	if err != nil {
 		log.Error().Err(err).Msg("parse request url failed")
 		return err
 	}
+	// 如果用例内没有设置 base url 则从变量里面获取
 	var baseURL string
 	if stepVariables["base_url"] != nil {
 		baseURL = stepVariables["base_url"].(string)
 	}
 	rawUrl := buildURL(baseURL, convertString(requestUrl))
 
-	// prepare request params
+	// prepare request params 将参数拼接在 URL 后面
 	var queryParams url.Values
 	if len(r.stepRequest.Params) > 0 {
 		params, err := r.parser.Parse(r.stepRequest.Params, stepVariables)
@@ -193,6 +207,7 @@ func (r *requestBuilder) prepareUrlParams(stepVariables map[string]interface{}) 
 	return nil
 }
 
+// prepareBody 初始化请求体
 func (r *requestBuilder) prepareBody(stepVariables map[string]interface{}) error {
 	// prepare request body
 	if r.stepRequest.Body == nil {
@@ -204,6 +219,7 @@ func (r *requestBuilder) prepareBody(stepVariables map[string]interface{}) error
 		return err
 	}
 	// check request body format if Content-Type specified as application/json
+	// 当请求体为 json 时，判断请求体类型，如果不在给定的类型中则直接返回一个错误
 	if strings.HasPrefix(r.req.Header.Get("Content-Type"), "application/json") {
 		switch data.(type) {
 		case bool, float64, string, map[string]interface{}, []interface{}, nil:
@@ -257,6 +273,10 @@ func (r *requestBuilder) prepareBody(stepVariables map[string]interface{}) error
 		return errors.New("unexpected request body type")
 	}
 
+	// r.req.Body 是一个用于存储请求体的 io.ReadCloser 接口类型。
+	// 通过使用 bytes.NewReader 将 dataBytes 转换为 bytes.Reader，可以创建一个实现了 io.Reader 接口的对象，用于读取数据。
+	// 然后，通过 io.NopCloser 包装为 io.ReadCloser 类型，该类型同时实现了 io.Reader 和 io.Closer 接口，
+	// 以便在需要关闭时可以关闭请求体的读取
 	r.req.Body = io.NopCloser(bytes.NewReader(dataBytes))
 	r.req.ContentLength = int64(len(dataBytes))
 

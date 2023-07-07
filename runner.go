@@ -317,6 +317,7 @@ func (r *HRPRunner) Run(testcases ...ITestCase) (err error) {
 
 // NewCaseRunner creates a new case runner for testcase.
 // each testcase has its own case runner
+// 为测试用例创建新的用例运行程序。 每个测试用例都有自己的案例运行程序
 func (r *HRPRunner) NewCaseRunner(testcase *TestCase) (*CaseRunner, error) {
 	caseRunner := &CaseRunner{
 		testCase:  testcase,
@@ -493,6 +494,7 @@ func (r *CaseRunner) parseConfig() error {
 
 // NewSession each boomer task initiates a new session
 // in order to avoid data racing
+// 为了避免数据竞争 每个 boomer 任务都会启动一个新会话
 func (r *CaseRunner) NewSession() *SessionRunner {
 	sessionRunner := &SessionRunner{
 		caseRunner: r,
@@ -503,6 +505,7 @@ func (r *CaseRunner) NewSession() *SessionRunner {
 
 // SessionRunner is used to run testcase and its steps.
 // each testcase has its own SessionRunner instance and share session variables.
+// 用于运行测试用例及其步骤。 每个测试用例都有自己的 SessionRunner 实例和共享会话变量。
 type SessionRunner struct {
 	caseRunner       *CaseRunner
 	sessionVariables map[string]interface{}
@@ -541,7 +544,8 @@ func (r *SessionRunner) inheritConnection(src *SessionRunner) {
 }
 
 // Start runs the test steps in sequential order.
-// givenVars is used for data driven
+// givenVars is used for data driven'
+// 按顺序运行测试步骤。 givenVars 用于数据驱动
 func (r *SessionRunner) Start(givenVars map[string]interface{}) error {
 	config := r.caseRunner.testCase.Config
 	log.Info().Str("testcase", config.Name).Msg("run testcase start")

@@ -28,6 +28,7 @@ type Parser struct {
 	plugin funplugin.IPlugin // plugin is used to call functions
 }
 
+// buildURL 请求链接拼接
 func buildURL(baseURL, stepURL string) string {
 	uStep, err := url.Parse(stepURL)
 	if err != nil {
@@ -56,6 +57,7 @@ func buildURL(baseURL, stepURL string) string {
 	return uStep.String()
 }
 
+// ParseHeaders 解析头
 func (p *Parser) ParseHeaders(rawHeaders map[string]string, variablesMapping map[string]interface{}) (map[string]string, error) {
 	parsedHeaders := make(map[string]string)
 	headers, err := p.Parse(rawHeaders, variablesMapping)
@@ -68,6 +70,7 @@ func (p *Parser) ParseHeaders(rawHeaders map[string]string, variablesMapping map
 	return parsedHeaders, nil
 }
 
+// convertString 任意类型转字符串
 func convertString(raw interface{}) string {
 	if str, ok := raw.(string); ok {
 		return str
@@ -80,20 +83,24 @@ func convertString(raw interface{}) string {
 	return fmt.Sprintf("%v", raw)
 }
 
+// Parse 对传入的各种数据类型进行解析（字符串变量转为实际变量值 $var -> xxx），转为预期数据结构后返回
 func (p *Parser) Parse(raw interface{}, variablesMapping map[string]interface{}) (interface{}, error) {
 	rawValue := reflect.ValueOf(raw)
 	switch rawValue.Kind() {
+	// 1. 字符串
 	case reflect.String:
 		// json.Number
 		if rawValue, ok := raw.(builtinJSON.Number); ok {
 			return parseJSONNumber(rawValue)
 		}
-		// other string
+		// other string 特殊字符串修剪后进行解析替换
 		value := rawValue.String()
 		value = strings.TrimSpace(value)
 		return p.ParseString(value, variablesMapping)
+	// 2. 切片
 	case reflect.Slice:
-		parsedSlice := make([]interface{}, rawValue.Len())
+		parsedSlice := make([]interface{}, rawValue.Len()) // 创建空切片
+		// 遍历每个元素，递归调用本函数进行解析，将结果存入新切片中
 		for i := 0; i < rawValue.Len(); i++ {
 			parsedValue, err := p.Parse(rawValue.Index(i).Interface(), variablesMapping)
 			if err != nil {
@@ -102,8 +109,10 @@ func (p *Parser) Parse(raw interface{}, variablesMapping map[string]interface{})
 			parsedSlice[i] = parsedValue
 		}
 		return parsedSlice, nil
+	// 3. 字典/映射
 	case reflect.Map: // convert any map to map[string]interface{}
 		parsedMap := make(map[string]interface{})
+		// 分别遍历每个键值，递归调用本函数进行解析，将结果存入新的 map 中
 		for _, k := range rawValue.MapKeys() {
 			parsedKey, err := p.ParseString(k.String(), variablesMapping)
 			if err != nil {
@@ -121,10 +130,12 @@ func (p *Parser) Parse(raw interface{}, variablesMapping map[string]interface{})
 		return parsedMap, nil
 	default:
 		// other types, e.g. nil, int, float, bool
+		// 数字统一转为 int、uint、float，非数字原样返回
 		return builtin.TypeNormalization(raw), nil
 	}
 }
 
+// parseJSONNumber 解析 json 中的数字
 func parseJSONNumber(raw builtinJSON.Number) (value interface{}, err error) {
 	if strings.Contains(raw.String(), ".") {
 		// float64
@@ -147,35 +158,43 @@ const (
 )
 
 var (
-	regexCompileVariable = regexp.MustCompile(fmt.Sprintf(`\$\{(%s)\}|\$(%s)`, regexVariable, regexVariable))     // parse ${var} or $var
-	regexCompileFunction = regexp.MustCompile(fmt.Sprintf(`\$\{(%s)\(([\$\w\.\-/\s=,]*)\)\}`, regexFunctionName)) // parse ${func1($a, $b)}
-	regexCompileNumber   = regexp.MustCompile(regexNumber)                                                        // parse number
+	// parse ${var} or $var
+	regexCompileVariable = regexp.MustCompile(fmt.Sprintf(`\$\{(%s)\}|\$(%s)`, regexVariable, regexVariable))
+	// parse ${func1($a, $b)}
+	regexCompileFunction = regexp.MustCompile(fmt.Sprintf(`\$\{(%s)\(([\$\w\.\-/\s=,]*)\)\}`, regexFunctionName))
+	// parse number
+	regexCompileNumber = regexp.MustCompile(regexNumber)
 )
 
 // ParseString parse string with variables
+// 解析字符串中的 $ 变量或函数
 func (p *Parser) ParseString(raw string, variablesMapping map[string]interface{}) (interface{}, error) {
-	matchStartPosition := 0
-	parsedString := ""
-	remainedString := raw
+	matchStartPosition := 0 // 匹配起始位置
+	parsedString := ""      // 解析后的字符串
+	remainedString := raw   // 剩余字符串
 
 	for matchStartPosition < len(raw) {
-		// locate $ char position
+		// locate $ char position 返回 $ 出现的下标
 		startPosition := strings.Index(remainedString, "$")
-		if startPosition == -1 { // no $ found
+
+		// no $ found 没找到 $ 代表没有变量或函数，原样返回
+		if startPosition == -1 {
 			// append remained string
 			parsedString += remainedString
 			break
 		}
 
-		// found $, check if variable or function
+		// found $, check if variable or function 匹配成功
 		matchStartPosition += startPosition
-		parsedString += remainedString[0:startPosition]
-		remainedString = remainedString[startPosition:]
+		parsedString += remainedString[0:startPosition] // 将 $ 之前的字符串先保存起来
+		remainedString = remainedString[startPosition:] // 更新剩余字符串为 $ 之后的数据
 
-		// Notice: notation priority
+		// Notice: notation priority 优先级
 		// $$ > ${func($a, $b)} > $var
 
 		// search $$, use $$ to escape $ notation
+		// 如果 $ 字符后紧跟着另一个 $ 字符 $$，表示 $ 字符是转义符，将其解析为单个 $ 字符
+		// 更新位置并继续循环
 		if strings.HasPrefix(remainedString, "$$") { // found $$
 			matchStartPosition += 2
 			parsedString += "$"
@@ -185,6 +204,9 @@ func (p *Parser) ParseString(raw string, variablesMapping map[string]interface{}
 
 		// search function like ${func($a, $b)}
 		funcMatched := regexCompileFunction.FindStringSubmatch(remainedString)
+		// 0: ${func($a, $b)}
+		// 1: func
+		// 2: $a, $b
 		if len(funcMatched) == 3 {
 			funcName := funcMatched[1]
 			argsStr := funcMatched[2]
@@ -261,19 +283,20 @@ func (p *Parser) ParseString(raw string, variablesMapping map[string]interface{}
 
 // callFunc calls function with arguments
 // only support return at most one result value
+// 带参数的调用函数 仅支持最多返回一个结果值
 func (p *Parser) callFunc(funcName string, arguments ...interface{}) (interface{}, error) {
-	// call with plugin function
+	// call with plugin function 调用插件函数
 	if p.plugin != nil {
 		if p.plugin.Has(funcName) {
 			return p.plugin.Call(funcName, arguments...)
 		}
-		commonName := shared.ConvertCommonName(funcName)
+		commonName := shared.ConvertCommonName(funcName) // 去除下划线且全小写
 		if p.plugin.Has(commonName) {
 			return p.plugin.Call(commonName, arguments...)
 		}
 	}
 
-	// get builtin function
+	// get builtin function 获取内置函数
 	function, ok := builtin.Functions[funcName]
 	if !ok {
 		return nil, fmt.Errorf("function %s is not found", funcName)
@@ -310,6 +333,7 @@ func mergeVariables(variables, overriddenVariables map[string]interface{}) map[s
 }
 
 // merge two map, the first map have higher priority
+// 合并两个字典 第一个优先级更高
 func mergeMap(m, overriddenMap map[string]string) map[string]string {
 	if overriddenMap == nil {
 		return m
@@ -372,7 +396,7 @@ func mergeSlices(slice, overriddenSlice []string) []string {
 
 var eval = goval.NewEvaluator()
 
-// literalEval parse string to number if possible
+// literalEval parse string to number if possible 如果可能，将字符串解析为数字
 func literalEval(raw string) (interface{}, error) {
 	raw = strings.TrimSpace(raw)
 
@@ -381,7 +405,7 @@ func literalEval(raw string) (interface{}, error) {
 		return raw, nil
 	}
 
-	// eval string to number
+	// eval string to number 将字符串作为表达式执行
 	result, err := eval.Evaluate(raw, nil, nil)
 	if err != nil {
 		log.Error().Err(err).Msgf("[literalEval] eval %s failed", raw)
@@ -390,13 +414,13 @@ func literalEval(raw string) (interface{}, error) {
 	return result, nil
 }
 
+// parseFunctionArguments 解析函数字符串 $a, $b
 func parseFunctionArguments(argsStr string) ([]interface{}, error) {
 	argsStr = strings.TrimSpace(argsStr)
 	if argsStr == "" {
 		return []interface{}{}, nil
 	}
-
-	// split arguments by comma
+	// split arguments by comma 通过逗号分割
 	args := strings.Split(argsStr, ",")
 	arguments := make([]interface{}, len(args))
 	for index, arg := range args {
@@ -404,15 +428,13 @@ func parseFunctionArguments(argsStr string) ([]interface{}, error) {
 		if arg == "" {
 			continue
 		}
-
-		// parse argument to number if possible
+		// parse argument to number if possible 如果可能，将参数解析为数字
 		arg, err := literalEval(arg)
 		if err != nil {
 			return nil, err
 		}
 		arguments[index] = arg
 	}
-
 	return arguments, nil
 }
 

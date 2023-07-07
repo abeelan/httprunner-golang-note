@@ -1,4 +1,4 @@
-> 本项目为 httprunner 4.3.3 golang 部分的源码注释版本，个人笔记。
+> 本项目为 httprunner 4.3.3 golang 部分的源码注释版本，个人笔记。:q
 
 # 代码阅读指南（golang 部分）
 
